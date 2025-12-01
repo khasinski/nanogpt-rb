@@ -1,0 +1,210 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$stdout.sync = true
+
+# Benchmark script for measuring training performance
+# A shorter version of train.rb focused on benchmarking
+#
+# Usage:
+#   bundle exec ruby bin/bench
+#   bundle exec ruby bin/bench --batch_size=8 --block_size=512
+#   bundle exec ruby bin/bench --real_data=false  # use random data
+
+require_relative "../lib/nano_gpt"
+
+# Default configuration (GPT-2 style model)
+CONFIG = {
+  batch_size: 12,
+  block_size: 1024,
+  n_layer: 12,
+  n_head: 12,
+  n_embd: 768,
+  dropout: 0.0,
+  bias: false,
+  real_data: true,
+  dataset: "openwebtext",
+  seed: 1337,
+  device: "auto"
+}.freeze
+
+def parse_args(args, config)
+  result = config.dup
+
+  args.each do |arg|
+    next unless arg.start_with?("--") && arg.include?("=")
+
+    key, val = arg[2..].split("=", 2)
+    key = key.to_sym
+
+    unless result.key?(key)
+      puts "Warning: Unknown config key: #{key}"
+      next
+    end
+
+    result[key] = case result[key]
+                  when Integer then val.to_i
+                  when Float then val.to_f
+                  when TrueClass, FalseClass then val.downcase == "true"
+                  else val
+                  end
+  end
+
+  result
+end
+
+def get_batch_from_data(data, batch_size, block_size, device)
+  max_start = data.size - block_size - 1
+  indices = Array.new(batch_size) { rand(0..max_start) }
+
+  x_arrays = []
+  y_arrays = []
+
+  indices.each do |i|
+    x_arrays << data[i, block_size]
+    y_arrays << data[i + 1, block_size]
+  end
+
+  x = Torch.tensor(x_arrays, dtype: :long)
+  y = Torch.tensor(y_arrays, dtype: :long)
+
+  if device != "cpu"
+    x = x.to(device)
+    y = y.to(device)
+  end
+
+  [x, y]
+end
+
+def main
+  config = parse_args(ARGV, CONFIG)
+
+  puts "=" * 60
+  puts "NanoGPT Benchmark"
+  puts "=" * 60
+  puts ""
+  puts "Configuration:"
+  puts "  batch_size: #{config[:batch_size]}"
+  puts "  block_size: #{config[:block_size]}"
+  puts "  n_layer: #{config[:n_layer]}"
+  puts "  n_head: #{config[:n_head]}"
+  puts "  n_embd: #{config[:n_embd]}"
+  puts "  real_data: #{config[:real_data]}"
+  puts ""
+
+  # Resolve device
+  if config[:device] == "auto"
+    config[:device] = NanoGPT::Device.auto
+  end
+  device = config[:device]
+  puts "Device: #{device}"
+
+  Torch.manual_seed(config[:seed])
+
+  # Data loading
+  if config[:real_data]
+    data_dir = File.join("data", config[:dataset])
+    train_bin = File.join(data_dir, "train.bin")
+
+    unless File.exist?(train_bin)
+      puts ""
+      puts "Warning: #{train_bin} not found, using random data instead."
+      puts "To use real data, run: bundle exec ruby data/#{config[:dataset]}/prepare.rb"
+      puts ""
+      config[:real_data] = false
+    end
+  end
+
+  if config[:real_data]
+    # Load training data
+    bytes = File.binread(File.join("data", config[:dataset], "train.bin"))
+    train_data = bytes.unpack("S<*")  # uint16 little-endian
+    puts "Loaded #{train_data.size} tokens from #{config[:dataset]}"
+
+    get_batch = lambda do
+      get_batch_from_data(train_data, config[:batch_size], config[:block_size], device)
+    end
+  else
+    # Use random data
+    vocab_size = 50304  # GPT-2 vocab size rounded up for efficiency
+    puts "Using random data (vocab_size=#{vocab_size})"
+
+    get_batch = lambda do
+      x = Torch.randint(vocab_size, [config[:batch_size], config[:block_size]], dtype: :long)
+      y = Torch.randint(vocab_size, [config[:batch_size], config[:block_size]], dtype: :long)
+      x = x.to(device) if device != "cpu"
+      y = y.to(device) if device != "cpu"
+      [x, y]
+    end
+  end
+
+  # Model init
+  puts ""
+  puts "Initializing model..."
+  model_config = NanoGPT::GPTConfig.new(
+    block_size: config[:block_size],
+    vocab_size: 50304,  # GPT-2 vocab rounded up
+    n_layer: config[:n_layer],
+    n_head: config[:n_head],
+    n_embd: config[:n_embd],
+    dropout: config[:dropout],
+    bias: config[:bias]
+  )
+
+  model = NanoGPT::GPT.new(model_config)
+  model.to(device) if device != "cpu"
+
+  # Optimizer
+  optimizer = model.configure_optimizers(
+    weight_decay: 1e-2,
+    learning_rate: 1e-4,
+    betas: [0.9, 0.95],
+    device_type: NanoGPT::Device.type(device)
+  )
+
+  puts ""
+  puts "Starting benchmark..."
+  puts "-" * 60
+
+  # Benchmark: burn-in phase then measurement phase
+  [{ name: "burn-in", steps: 10 }, { name: "benchmark", steps: 20 }].each do |phase|
+    puts ""
+    puts "Phase: #{phase[:name]} (#{phase[:steps]} steps)"
+
+    x, y = get_batch.call
+    t0 = Time.now
+
+    phase[:steps].times do |k|
+      # Forward pass
+      _logits, loss = model.forward(x, targets: y)
+
+      # Get next batch
+      x, y = get_batch.call
+
+      # Backward pass
+      optimizer.zero_grad
+      loss.backward
+      optimizer.step
+
+      loss_val = loss.item
+      puts "  #{k}/#{phase[:steps]} loss: #{format('%.4f', loss_val)}"
+    end
+
+    t1 = Time.now
+    dt = t1 - t0
+
+    if phase[:name] == "benchmark"
+      mfu = model.estimate_mfu(config[:batch_size] * phase[:steps], dt)
+      time_per_iter = dt / phase[:steps] * 1000
+
+      puts ""
+      puts "=" * 60
+      puts "Results:"
+      puts "  Time per iteration: #{format('%.2f', time_per_iter)}ms"
+      puts "  MFU: #{format('%.2f', mfu * 100)}%"
+      puts "=" * 60
+    end
+  end
+end
+
+main

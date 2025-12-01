@@ -243,6 +243,59 @@ RSpec.describe NanoGPT do
       expect(param_groups[0][:weight_decay]).to eq(0.1)
       expect(param_groups[1][:weight_decay]).to eq(0.0)
     end
+
+    describe "#estimate_mfu" do
+      it "returns a positive MFU value" do
+        model = NanoGPT::GPT.new(config)
+
+        # Simulate 10 forward-backward passes over 1 second
+        mfu = model.estimate_mfu(10, 1.0)
+
+        expect(mfu).to be_a(Float)
+        expect(mfu).to be > 0
+        expect(mfu).to be < 1.0 # MFU should be less than 100%
+      end
+
+      it "increases with more iterations per unit time" do
+        model = NanoGPT::GPT.new(config)
+
+        # Same time, more iterations = higher throughput = higher MFU
+        mfu_slow = model.estimate_mfu(10, 1.0)
+        mfu_fast = model.estimate_mfu(20, 1.0)
+
+        expect(mfu_fast).to be > mfu_slow
+      end
+
+      it "decreases with longer elapsed time" do
+        model = NanoGPT::GPT.new(config)
+
+        # Same iterations, more time = lower throughput = lower MFU
+        mfu_fast = model.estimate_mfu(10, 1.0)
+        mfu_slow = model.estimate_mfu(10, 2.0)
+
+        expect(mfu_fast).to be > mfu_slow
+      end
+
+      it "scales with model size" do
+        # Smaller model
+        small_config = NanoGPT::GPTConfig.new(
+          block_size: 32,
+          vocab_size: 100,
+          n_layer: 1,
+          n_head: 2,
+          n_embd: 32,
+          dropout: 0.0,
+          bias: true
+        )
+        small_model = NanoGPT::GPT.new(small_config)
+
+        # Same throughput, smaller model = lower absolute FLOPS = lower MFU
+        small_mfu = small_model.estimate_mfu(10, 1.0)
+        large_mfu = NanoGPT::GPT.new(config).estimate_mfu(10, 1.0)
+
+        expect(large_mfu).to be > small_mfu
+      end
+    end
   end
 
   describe "training step" do

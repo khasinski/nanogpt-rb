@@ -47,6 +47,27 @@ module NanoGPT
       n_params
     end
 
+    # Estimate model flops utilization (MFU)
+    # See PaLM paper Appendix B: https://arxiv.org/abs/2204.02311
+    def estimate_mfu(fwdbwd_per_iter, dt)
+      n = num_params
+      cfg = @config
+      l = cfg.n_layer
+      h = cfg.n_head
+      q = cfg.n_embd / cfg.n_head
+      t = cfg.block_size
+
+      # FLOPs per token and per forward-backward pass
+      flops_per_token = 6 * n + 12 * l * h * q * t
+      flops_per_fwdbwd = flops_per_token * t
+      flops_per_iter = flops_per_fwdbwd * fwdbwd_per_iter
+
+      # Express throughput as ratio of A100 bfloat16 peak FLOPS (312 TFLOPS)
+      flops_achieved = flops_per_iter / dt
+      flops_promised = 312e12
+      flops_achieved / flops_promised
+    end
+
     def forward(idx, targets: nil)
       b, t = idx.shape
       raise ArgumentError, "Sequence length #{t} exceeds block_size #{@config.block_size}" if t > @config.block_size

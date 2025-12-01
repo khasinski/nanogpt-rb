@@ -48,7 +48,8 @@ CONFIG = {
   max_iters: 5000,
 
   # System
-  device: "cpu"
+  # Use "auto" to auto-detect best device (MPS on Mac, CUDA on Linux, CPU otherwise)
+  device: "auto"
 }.freeze
 
 def parse_args(args, config)
@@ -82,6 +83,12 @@ end
 def main
   config = parse_args(ARGV, CONFIG)
 
+  # Resolve device (auto-detect if "auto")
+  if config[:device] == "auto"
+    config[:device] = NanoGPT::Device.auto
+    puts "Auto-detected device: #{config[:device]}"
+  end
+
   # Load tokenizer to get vocab_size (auto-detects char-level vs GPT-2 BPE)
   data_dir = File.join("data", config[:dataset])
   train_bin = File.join(data_dir, "train.bin")
@@ -109,6 +116,13 @@ def main
 
   # Create model
   model = NanoGPT::GPT.new(model_config)
+
+  # Move model to device (MPS, CUDA, or CPU)
+  device = config[:device]
+  if device != "cpu"
+    model.to(device)
+    puts "Model moved to #{device}"
+  end
 
   # Create data loader
   data_loader = NanoGPT::DataLoader.new(

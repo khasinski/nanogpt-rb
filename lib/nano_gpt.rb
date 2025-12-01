@@ -3,6 +3,7 @@
 require "torch"
 require "numo/narray"
 
+require_relative "nano_gpt/device"
 require_relative "nano_gpt/config"
 require_relative "nano_gpt/layers/layer_norm"
 require_relative "nano_gpt/layers/mlp"

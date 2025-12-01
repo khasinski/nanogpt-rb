@@ -15,7 +15,8 @@ CONFIG = {
   temperature: 0.8,
   top_k: 200,
   seed: 1337,
-  device: "cpu"
+  # Use "auto" to auto-detect best device (MPS on Mac, CUDA on Linux, CPU otherwise)
+  device: "auto"
 }.freeze
 
 def parse_args(args, config)
@@ -46,6 +47,13 @@ end
 def main
   config = parse_args(ARGV, CONFIG)
 
+  # Resolve device (auto-detect if "auto")
+  if config[:device] == "auto"
+    config[:device] = NanoGPT::Device.auto
+    puts "Auto-detected device: #{config[:device]}"
+  end
+  device = config[:device]
+
   Torch.manual_seed(config[:seed])
 
   # Load checkpoint
@@ -64,6 +72,7 @@ def main
   model_config = NanoGPT::GPTConfig.new(**model_args)
   model = NanoGPT::GPT.new(model_config)
   model.load_state_dict(checkpoint["model"])
+  model.to(device) if device != "cpu"
   model.eval
 
   # Load tokenizer (auto-detects character-level vs GPT-2 BPE)
@@ -79,7 +88,7 @@ def main
 
   # Encode starting prompt
   start_ids = tokenizer.encode(start_text)
-  x = Torch.tensor([start_ids], dtype: :long)
+  x = Torch.tensor([start_ids], dtype: :long, device: device)
 
   puts "Generating #{config[:num_samples]} samples..."
   puts "=" * 50

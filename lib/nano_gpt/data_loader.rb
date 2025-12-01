@@ -62,7 +62,8 @@ module NanoGPT
       x = Torch.tensor(x_arrays, dtype: :long)
       y = Torch.tensor(y_arrays, dtype: :long)
 
-      if @device != "cpu" && @device.include?("cuda")
+      # Move to device (CPU, CUDA, or MPS)
+      if @device != "cpu"
         x = x.to(@device)
         y = y.to(@device)
       end

@@ -1,6 +1,8 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
+$stdout.sync = true
+
 # Train a character-level GPT model on Shakespeare
 # Usage: bundle exec ruby bin/train [options]
 

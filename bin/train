@@ -1,0 +1,136 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Train a character-level GPT model on Shakespeare
+# Usage: bundle exec ruby bin/train [options]
+
+require_relative "../lib/nano_gpt"
+
+# Default configuration for Shakespeare char-level training
+CONFIG = {
+  # I/O
+  out_dir: "out-shakespeare-char",
+  eval_interval: 250,
+  log_interval: 10,
+  eval_iters: 200,
+  eval_only: false,
+  always_save_checkpoint: false,
+
+  # Data
+  # Note: torch.rb uses ~6x more memory than Python PyTorch
+  # Use smaller batch with gradient accumulation to compensate
+  dataset: "shakespeare_char",
+  batch_size: 8,  # Reduced from 64 due to torch.rb memory overhead
+  block_size: 256,
+  gradient_accumulation_steps: 8,  # Effective batch size = 8 * 8 = 64
+
+  # Model
+  n_layer: 6,
+  n_head: 6,
+  n_embd: 384,
+  dropout: 0.2,
+  bias: false,
+
+  # Optimizer
+  learning_rate: 1e-3,
+  weight_decay: 1e-1,
+  beta1: 0.9,
+  beta2: 0.99,
+  grad_clip: 1.0,
+
+  # LR scheduler
+  decay_lr: true,
+  warmup_iters: 100,
+  lr_decay_iters: 5000,
+  min_lr: 1e-4,
+
+  # Training
+  max_iters: 5000,
+
+  # System
+  device: "cpu"
+}.freeze
+
+def parse_args(args, config)
+  result = config.dup
+
+  args.each do |arg|
+    next unless arg.start_with?("--") && arg.include?("=")
+
+    key, val = arg[2..].split("=", 2)
+    key = key.to_sym
+
+    unless result.key?(key)
+      puts "Warning: Unknown config key: #{key}"
+      next
+    end
+
+    # Parse value based on existing type
+    result[key] = case result[key]
+                  when Integer then val.to_i
+                  when Float then val.to_f
+                  when TrueClass, FalseClass then val.downcase == "true"
+                  else val
+                  end
+
+    puts "Override: #{key} = #{result[key]}"
+  end
+
+  result
+end
+
+def main
+  config = parse_args(ARGV, CONFIG)
+
+  # Load tokenizer to get vocab_size
+  data_dir = File.join("data", config[:dataset])
+  meta_path = File.join(data_dir, "meta.json")
+
+  unless File.exist?(meta_path)
+    puts "Error: #{meta_path} not found. Run the data preparation script first:"
+    puts "  bundle exec ruby data/#{config[:dataset]}/prepare.rb"
+    exit 1
+  end
+
+  tokenizer = NanoGPT::Tokenizer.from_file(meta_path)
+  puts "Loaded tokenizer with vocab_size=#{tokenizer.vocab_size}"
+
+  # Create model config
+  model_config = NanoGPT::GPTConfig.new(
+    block_size: config[:block_size],
+    vocab_size: tokenizer.vocab_size,
+    n_layer: config[:n_layer],
+    n_head: config[:n_head],
+    n_embd: config[:n_embd],
+    dropout: config[:dropout],
+    bias: config[:bias]
+  )
+
+  # Create model
+  model = NanoGPT::GPT.new(model_config)
+
+  # Create data loader
+  data_loader = NanoGPT::DataLoader.new(
+    data_dir: data_dir,
+    block_size: config[:block_size],
+    batch_size: config[:batch_size],
+    device: config[:device]
+  )
+
+  puts "Train data: #{data_loader.train_size} tokens"
+  puts "Val data: #{data_loader.val_size} tokens"
+
+  # Create trainer
+  trainer = NanoGPT::Trainer.new(
+    model: model,
+    data_loader: data_loader,
+    config: config
+  )
+
+  # Train!
+  trainer.train
+
+  puts "\nTraining complete! Checkpoint saved to #{config[:out_dir]}/ckpt.pt"
+end
+
+main

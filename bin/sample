@@ -1,0 +1,101 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Generate text from a trained model
+# Usage: bundle exec ruby bin/sample [options]
+
+require_relative "../lib/nano_gpt"
+
+CONFIG = {
+  out_dir: "out-shakespeare-char",
+  dataset: "shakespeare_char",
+  start: "\n",
+  num_samples: 5,
+  max_new_tokens: 500,
+  temperature: 0.8,
+  top_k: 200,
+  seed: 1337,
+  device: "cpu"
+}.freeze
+
+def parse_args(args, config)
+  result = config.dup
+
+  args.each do |arg|
+    next unless arg.start_with?("--") && arg.include?("=")
+
+    key, val = arg[2..].split("=", 2)
+    key = key.to_sym
+
+    unless result.key?(key)
+      puts "Warning: Unknown config key: #{key}"
+      next
+    end
+
+    result[key] = case result[key]
+                  when Integer then val.to_i
+                  when Float then val.to_f
+                  when TrueClass, FalseClass then val.downcase == "true"
+                  else val
+                  end
+  end
+
+  result
+end
+
+def main
+  config = parse_args(ARGV, CONFIG)
+
+  Torch.manual_seed(config[:seed])
+
+  # Load checkpoint
+  ckpt_path = File.join(config[:out_dir], "ckpt.pt")
+  unless File.exist?(ckpt_path)
+    puts "Error: Checkpoint not found at #{ckpt_path}"
+    puts "Train a model first with: bundle exec ruby bin/train"
+    exit 1
+  end
+
+  puts "Loading checkpoint from #{ckpt_path}..."
+  checkpoint = Torch.load(ckpt_path)
+
+  # Recreate model from checkpoint
+  model_args = checkpoint["model_args"].transform_keys(&:to_sym)
+  model_config = NanoGPT::GPTConfig.new(**model_args)
+  model = NanoGPT::GPT.new(model_config)
+  model.load_state_dict(checkpoint["model"])
+  model.eval
+
+  # Load tokenizer
+  meta_path = File.join("data", config[:dataset], "meta.json")
+  tokenizer = NanoGPT::Tokenizer.from_file(meta_path)
+
+  # Handle start text
+  start_text = config[:start]
+  if start_text.start_with?("FILE:")
+    start_text = File.read(start_text[5..])
+  end
+
+  # Encode starting prompt
+  start_ids = tokenizer.encode(start_text)
+  x = Torch.tensor([start_ids], dtype: :long)
+
+  puts "Generating #{config[:num_samples]} samples..."
+  puts "=" * 50
+
+  # Generate samples
+  config[:num_samples].times do |k|
+    y = model.generate(
+      x,
+      config[:max_new_tokens],
+      temperature: config[:temperature],
+      top_k: config[:top_k]
+    )
+
+    output = tokenizer.decode(y[0].to_a)
+    puts output
+    puts "-" * 50
+  end
+end
+
+main

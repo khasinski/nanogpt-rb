@@ -1,0 +1,26 @@
+# Python directory (original reference implementation)
+python/
+
+# Data files
+data/*/train.bin
+data/*/val.bin
+data/*/meta.json
+*.bin
+
+# Model checkpoints
+out-*/
+*.pt
+
+# Ruby
+*.gem
+.bundle/
+vendor/bundle/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+.claude/

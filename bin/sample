@@ -2,50 +2,15 @@
 # frozen_string_literal: true
 
 # Generate text from a trained model
-# Usage: bundle exec ruby bin/sample [options]
+# Usage:
+#   bundle exec ruby bin/sample [options]
+#   bundle exec ruby bin/sample --config=config/sample.json
+#   bundle exec ruby bin/sample --out_dir=out-shakespeare --num_samples=3
 
 require_relative "../lib/nano_gpt"
 
-CONFIG = {
-  out_dir: "out-shakespeare-char",
-  dataset: "shakespeare_char",
-  start: "\n",
-  num_samples: 5,
-  max_new_tokens: 500,
-  temperature: 0.8,
-  top_k: 200,
-  seed: 1337,
-  # Use "auto" to auto-detect best device (MPS on Mac, CUDA on Linux, CPU otherwise)
-  device: "auto"
-}.freeze
-
-def parse_args(args, config)
-  result = config.dup
-
-  args.each do |arg|
-    next unless arg.start_with?("--") && arg.include?("=")
-
-    key, val = arg[2..].split("=", 2)
-    key = key.to_sym
-
-    unless result.key?(key)
-      puts "Warning: Unknown config key: #{key}"
-      next
-    end
-
-    result[key] = case result[key]
-                  when Integer then val.to_i
-                  when Float then val.to_f
-                  when TrueClass, FalseClass then val.downcase == "true"
-                  else val
-                  end
-  end
-
-  result
-end
-
 def main
-  config = parse_args(ARGV, CONFIG)
+  config = NanoGPT::SampleConfig.load(ARGV)
 
   # Resolve device (auto-detect if "auto")
   if config[:device] == "auto"

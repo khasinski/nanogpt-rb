@@ -3,87 +3,16 @@
 
 $stdout.sync = true
 
-# Train a character-level GPT model on Shakespeare
-# Usage: bundle exec ruby bin/train [options]
+# Train a GPT model
+# Usage:
+#   bundle exec ruby bin/train [options]
+#   bundle exec ruby bin/train --config=config/train_shakespeare.json
+#   bundle exec ruby bin/train --config=config/train_gpt2.json --max_iters=1000
 
 require_relative "../lib/nano_gpt"
 
-# Default configuration for Shakespeare char-level training
-CONFIG = {
-  # I/O
-  out_dir: "out-shakespeare-char",
-  eval_interval: 250,
-  log_interval: 10,
-  eval_iters: 200,
-  eval_only: false,
-  always_save_checkpoint: false,
-
-  # Data
-  # Note: torch.rb has ~1.5x memory overhead vs Python after optimization
-  # (GC runs after each transformer block, in-place attention ops)
-  dataset: "shakespeare_char",
-  batch_size: 64,
-  block_size: 256,
-  gradient_accumulation_steps: 1,
-
-  # Model
-  n_layer: 6,
-  n_head: 6,
-  n_embd: 384,
-  dropout: 0.2,
-  bias: false,
-
-  # Optimizer
-  learning_rate: 1e-3,
-  weight_decay: 1e-1,
-  beta1: 0.9,
-  beta2: 0.99,
-  grad_clip: 1.0,
-
-  # LR scheduler
-  decay_lr: true,
-  warmup_iters: 100,
-  lr_decay_iters: 5000,
-  min_lr: 1e-4,
-
-  # Training
-  max_iters: 5000,
-
-  # System
-  # Use "auto" to auto-detect best device (MPS on Mac, CUDA on Linux, CPU otherwise)
-  device: "auto"
-}.freeze
-
-def parse_args(args, config)
-  result = config.dup
-
-  args.each do |arg|
-    next unless arg.start_with?("--") && arg.include?("=")
-
-    key, val = arg[2..].split("=", 2)
-    key = key.to_sym
-
-    unless result.key?(key)
-      puts "Warning: Unknown config key: #{key}"
-      next
-    end
-
-    # Parse value based on existing type
-    result[key] = case result[key]
-                  when Integer then val.to_i
-                  when Float then val.to_f
-                  when TrueClass, FalseClass then val.downcase == "true"
-                  else val
-                  end
-
-    puts "Override: #{key} = #{result[key]}"
-  end
-
-  result
-end
-
 def main
-  config = parse_args(ARGV, CONFIG)
+  config = NanoGPT::TrainConfig.load(ARGV)
 
   # Resolve device (auto-detect if "auto")
   if config[:device] == "auto"
@@ -141,7 +70,7 @@ def main
   trainer = NanoGPT::Trainer.new(
     model: model,
     data_loader: data_loader,
-    config: config
+    config: config.to_h
   )
 
   # Train!

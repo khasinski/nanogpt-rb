@@ -66,9 +66,10 @@ def main
   model.load_state_dict(checkpoint["model"])
   model.eval
 
-  # Load tokenizer
-  meta_path = File.join("data", config[:dataset], "meta.json")
-  tokenizer = NanoGPT::Tokenizer.from_file(meta_path)
+  # Load tokenizer (auto-detects character-level vs GPT-2 BPE)
+  dataset_dir = File.join("data", config[:dataset])
+  tokenizer = NanoGPT::Tokenizer.for_dataset(dataset_dir)
+  puts "number of parameters: #{model.num_params / 1e6}M"
 
   # Handle start text
   start_text = config[:start]

@@ -17,16 +17,17 @@ GEM
       diff-lcs (>= 1.2.0, < 2.0)
       rspec-support (~> 3.13.0)
     rspec-support (3.13.6)
+    tiktoken_ruby (0.0.13-arm64-darwin)
     torch-rb (0.22.2)
       rice (>= 4.7)
 
 PLATFORMS
   arm64-darwin-24
-  ruby
 
 DEPENDENCIES
   numo-narray (~> 0.9)
   rspec (~> 3.12)
+  tiktoken_ruby (~> 0.0)
   torch-rb (~> 0.14)
 
 BUNDLED WITH

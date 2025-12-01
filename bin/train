@@ -82,18 +82,19 @@ end
 def main
   config = parse_args(ARGV, CONFIG)
 
-  # Load tokenizer to get vocab_size
+  # Load tokenizer to get vocab_size (auto-detects char-level vs GPT-2 BPE)
   data_dir = File.join("data", config[:dataset])
-  meta_path = File.join(data_dir, "meta.json")
+  train_bin = File.join(data_dir, "train.bin")
 
-  unless File.exist?(meta_path)
-    puts "Error: #{meta_path} not found. Run the data preparation script first:"
+  unless File.exist?(train_bin)
+    puts "Error: #{train_bin} not found. Run the data preparation script first:"
     puts "  bundle exec ruby data/#{config[:dataset]}/prepare.rb"
     exit 1
   end
 
-  tokenizer = NanoGPT::Tokenizer.from_file(meta_path)
-  puts "Loaded tokenizer with vocab_size=#{tokenizer.vocab_size}"
+  tokenizer = NanoGPT::Tokenizer.for_dataset(data_dir)
+  tokenizer_type = tokenizer.is_a?(NanoGPT::GPT2Tokenizer) ? "GPT-2 BPE" : "character-level"
+  puts "Loaded #{tokenizer_type} tokenizer with vocab_size=#{tokenizer.vocab_size}"
 
   # Create model config
   model_config = NanoGPT::GPTConfig.new(

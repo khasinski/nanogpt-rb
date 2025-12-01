@@ -15,7 +15,7 @@ out-*/
 # Ruby
 *.gem
 .bundle/
-vendor/bundle/
+vendor/*
 
 # IDE
 .idea/

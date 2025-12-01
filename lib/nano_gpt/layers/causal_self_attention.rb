@@ -21,13 +21,15 @@ module NanoGPT
         @attn_dropout = Torch::NN::Dropout.new(p: config.dropout)
         @resid_dropout = Torch::NN::Dropout.new(p: config.dropout)
 
-        # torch.rb doesn't fully support is_causal in scaled_dot_product_attention
-        # so we always use manual attention with causal mask
-        @flash = false
+        # Use native scaled_dot_product_attention with is_causal=true when dropout is 0
+        # Native SDPA is ~5x faster but doesn't support dropout with is_causal mode
+        @flash = config.dropout == 0.0
 
-        # Causal mask for manual attention
-        mask = Torch.tril(Torch.ones(config.block_size, config.block_size))
-        register_buffer("mask", mask.view(1, 1, config.block_size, config.block_size))
+        # Causal mask for manual attention (only used when @flash is false)
+        unless @flash
+          mask = Torch.tril(Torch.ones(config.block_size, config.block_size))
+          register_buffer("mask", mask.view(1, 1, config.block_size, config.block_size))
+        end
       end
 
       def forward(x)
@@ -42,19 +44,23 @@ module NanoGPT
         k = k.view(b, t, @n_head, @head_size).transpose(1, 2)
         v = v.view(b, t, @n_head, @head_size).transpose(1, 2)
 
-        # Manual attention implementation with causal mask
-        # Use in-place operations to reduce memory usage (important for torch.rb)
-        scale = 1.0 / Math.sqrt(@head_size)
-        att = q.matmul(k.transpose(-2, -1))
-        att.mul!(scale)  # In-place scale
+        y = if @flash
+              # Native scaled_dot_product_attention with is_causal=true
+              # Uses Flash Attention on CUDA, optimized kernel on MPS
+              Torch::NN.scaled_dot_product_attention(q, k, v, nil, 0.0, true)
+            else
+              # Manual attention implementation with causal mask
+              scale = 1.0 / Math.sqrt(@head_size)
+              att = q.matmul(k.transpose(-2, -1))
+              att.mul!(scale)
 
-        # Apply causal mask - slice mask to current sequence length
-        # Using narrow to slice: (1, 1, block_size, block_size) -> (1, 1, t, t)
-        mask_slice = @mask.narrow(2, 0, t).narrow(3, 0, t)
-        att.masked_fill!(mask_slice.eq(0), -Float::INFINITY)  # In-place mask
-        att = Torch::NN::Functional.softmax(att, dim: -1)
-        att = @attn_dropout.call(att)
-        y = att.matmul(v)
+              # Apply causal mask - slice mask to current sequence length
+              mask_slice = @mask.narrow(2, 0, t).narrow(3, 0, t)
+              att.masked_fill!(mask_slice.eq(0), -Float::INFINITY)
+              att = Torch::NN::Functional.softmax(att, dim: -1)
+              att = @attn_dropout.call(att)
+              att.matmul(v)
+            end
 
         # Reassemble heads: (B, nh, T, hs) -> (B, T, C)
         y = y.transpose(1, 2).contiguous.view(b, t, c)

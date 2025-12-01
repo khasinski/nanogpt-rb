@@ -43,13 +43,15 @@ module NanoGPT
         v = v.view(b, t, @n_head, @head_size).transpose(1, 2)
 
         # Manual attention implementation with causal mask
+        # Use in-place operations to reduce memory usage (important for torch.rb)
         scale = 1.0 / Math.sqrt(@head_size)
-        att = q.matmul(k.transpose(-2, -1)) * scale
+        att = q.matmul(k.transpose(-2, -1))
+        att.mul!(scale)  # In-place scale
 
         # Apply causal mask - slice mask to current sequence length
         # Using narrow to slice: (1, 1, block_size, block_size) -> (1, 1, t, t)
         mask_slice = @mask.narrow(2, 0, t).narrow(3, 0, t)
-        att = att.masked_fill(mask_slice.eq(0), -Float::INFINITY)
+        att.masked_fill!(mask_slice.eq(0), -Float::INFINITY)  # In-place mask
         att = Torch::NN::Functional.softmax(att, dim: -1)
         att = @attn_dropout.call(att)
         y = att.matmul(v)

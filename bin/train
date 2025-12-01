@@ -17,12 +17,12 @@ CONFIG = {
   always_save_checkpoint: false,
 
   # Data
-  # Note: torch.rb uses ~6x more memory than Python PyTorch
-  # Use smaller batch with gradient accumulation to compensate
+  # Note: torch.rb has ~1.5x memory overhead vs Python after optimization
+  # (GC runs after each transformer block, in-place attention ops)
   dataset: "shakespeare_char",
-  batch_size: 8,  # Reduced from 64 due to torch.rb memory overhead
+  batch_size: 64,
   block_size: 256,
-  gradient_accumulation_steps: 8,  # Effective batch size = 8 * 8 = 64
+  gradient_accumulation_steps: 1,
 
   # Model
   n_layer: 6,

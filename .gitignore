@@ -5,6 +5,7 @@ python/
 data/*/train.bin
 data/*/val.bin
 data/*/meta.json
+data/*/input.txt
 *.bin
 
 # Model checkpoints

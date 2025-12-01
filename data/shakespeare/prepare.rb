@@ -1,13 +1,16 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Prepare the Shakespeare dataset for character-level language modeling.
-# Downloads the tiny shakespeare dataset and creates train.bin, val.bin, and meta.json
+# Prepare the Shakespeare dataset with GPT-2 BPE tokenization.
+# Downloads the tiny shakespeare dataset and creates train.bin and val.bin
+# using GPT-2's BPE tokenizer (vocab_size=50257).
+#
+# Usage: bundle exec ruby data/shakespeare/prepare.rb
 
 require "net/http"
 require "openssl"
 require "numo/narray"
-require "json"
+require "tiktoken_ruby"
 
 DATA_URL = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
 SCRIPT_DIR = File.dirname(__FILE__)
@@ -32,27 +35,18 @@ end
 data = File.read(input_path)
 puts "Length of dataset in characters: #{data.length}"
 
-# Build vocabulary from all unique characters
-chars = data.chars.uniq.sort
-vocab_size = chars.size
-puts "All unique characters: #{chars.join.inspect}"
-puts "Vocab size: #{vocab_size}"
-
-# Create mappings
-stoi = chars.each_with_index.to_h
-itos = chars.each_with_index.map { |c, i| [i, c] }.to_h
-
-# Encode function
-encode = ->(s) { s.chars.map { |c| stoi[c] } }
+# Initialize GPT-2 BPE tokenizer
+enc = Tiktoken.get_encoding(:r50k_base)
+puts "Using GPT-2 BPE tokenizer (vocab_size=50257)"
 
 # Train/val split (90/10)
 n = data.length
 train_data = data[0...(n * 0.9).to_i]
 val_data = data[(n * 0.9).to_i..]
 
-# Encode to integers
-train_ids = encode.call(train_data)
-val_ids = encode.call(val_data)
+# Encode to integers using BPE
+train_ids = enc.encode(train_data)
+val_ids = enc.encode(val_data)
 puts "Train has #{train_ids.length} tokens"
 puts "Val has #{val_ids.length} tokens"
 
@@ -62,12 +56,6 @@ val_arr = Numo::UInt16.cast(val_ids)
 File.binwrite(File.join(SCRIPT_DIR, "train.bin"), train_arr.to_binary)
 File.binwrite(File.join(SCRIPT_DIR, "val.bin"), val_arr.to_binary)
 
-# Save meta information as JSON
-meta = {
-  "vocab_size" => vocab_size,
-  "itos" => itos.transform_keys(&:to_s),
-  "stoi" => stoi
-}
-File.write(File.join(SCRIPT_DIR, "meta.json"), JSON.pretty_generate(meta))
-
-puts "Done! Created train.bin, val.bin, and meta.json"
+# No meta.json - indicates GPT-2 BPE tokenizer should be used
+puts "Done! Created train.bin and val.bin"
+puts "Note: No meta.json (uses GPT-2 BPE tokenizer, vocab_size=50257)"

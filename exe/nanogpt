@@ -1,0 +1,372 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$stdout.sync = true
+
+require "nano_gpt"
+
+class NanoGPTCLI
+  COMMANDS = %w[prepare train sample bench version help].freeze
+
+  def initialize(args)
+    @command = args.shift
+    @args = args
+  end
+
+  def run
+    case @command
+    when "prepare"
+      prepare
+    when "train"
+      train
+    when "sample"
+      sample
+    when "bench"
+      bench
+    when "version", "-v", "--version"
+      version
+    when "help", "-h", "--help", nil
+      help
+    else
+      puts "Unknown command: #{@command}"
+      puts ""
+      help
+      exit 1
+    end
+  end
+
+  private
+
+  def prepare
+    dataset = @args.first
+
+    # Find available datasets
+    data_dir = File.join(File.dirname(__FILE__), "..", "data")
+    available = Dir.glob(File.join(data_dir, "*", "prepare.rb")).map do |path|
+      File.basename(File.dirname(path))
+    end.sort
+
+    if dataset.nil?
+      puts "Usage: nanogpt prepare <dataset>"
+      puts ""
+      puts "Available datasets:"
+      available.each { |d| puts "  #{d}" }
+      exit 1
+    end
+
+    prepare_script = File.join(data_dir, dataset, "prepare.rb")
+
+    unless File.exist?(prepare_script)
+      puts "Error: Unknown dataset '#{dataset}'"
+      puts ""
+      puts "Available datasets:"
+      available.each { |d| puts "  #{d}" }
+      exit 1
+    end
+
+    puts "Preparing dataset: #{dataset}"
+    load prepare_script
+  end
+
+  def train
+    config = NanoGPT::TrainConfig.load(@args)
+
+    if config[:device] == "auto"
+      config[:device] = NanoGPT::Device.auto
+      puts "Auto-detected device: #{config[:device]}"
+    end
+
+    data_dir = File.join("data", config[:dataset])
+    train_bin = File.join(data_dir, "train.bin")
+
+    unless File.exist?(train_bin)
+      puts "Error: #{train_bin} not found. Run the data preparation script first:"
+      puts "  bundle exec ruby data/#{config[:dataset]}/prepare.rb"
+      exit 1
+    end
+
+    tokenizer = NanoGPT::Tokenizer.for_dataset(data_dir)
+    tokenizer_type = tokenizer.is_a?(NanoGPT::GPT2Tokenizer) ? "GPT-2 BPE" : "character-level"
+    puts "Loaded #{tokenizer_type} tokenizer with vocab_size=#{tokenizer.vocab_size}"
+
+    model_config = NanoGPT::GPTConfig.new(
+      block_size: config[:block_size],
+      vocab_size: tokenizer.vocab_size,
+      n_layer: config[:n_layer],
+      n_head: config[:n_head],
+      n_embd: config[:n_embd],
+      dropout: config[:dropout],
+      bias: config[:bias]
+    )
+
+    model = NanoGPT::GPT.new(model_config)
+
+    device = config[:device]
+    if device != "cpu"
+      model.to(device)
+      puts "Model moved to #{device}"
+    end
+
+    data_loader = NanoGPT::DataLoader.new(
+      data_dir: data_dir,
+      block_size: config[:block_size],
+      batch_size: config[:batch_size],
+      device: config[:device]
+    )
+
+    puts "Train data: #{data_loader.train_size} tokens"
+    puts "Val data: #{data_loader.val_size} tokens"
+
+    trainer = NanoGPT::Trainer.new(
+      model: model,
+      data_loader: data_loader,
+      config: config.to_h
+    )
+
+    trainer.train
+
+    puts "\nTraining complete! Checkpoint saved to #{config[:out_dir]}/ckpt.pt"
+  end
+
+  def sample
+    config = NanoGPT::SampleConfig.load(@args)
+
+    if config[:device] == "auto"
+      config[:device] = NanoGPT::Device.auto
+      puts "Auto-detected device: #{config[:device]}"
+    end
+    device = config[:device]
+
+    Torch.manual_seed(config[:seed])
+
+    ckpt_path = File.join(config[:out_dir], "ckpt.pt")
+    unless File.exist?(ckpt_path)
+      puts "Error: Checkpoint not found at #{ckpt_path}"
+      puts "Train a model first with: nanogpt train"
+      exit 1
+    end
+
+    puts "Loading checkpoint from #{ckpt_path}..."
+    checkpoint = Torch.load(ckpt_path)
+
+    model_args = checkpoint["model_args"].transform_keys(&:to_sym)
+    model_config = NanoGPT::GPTConfig.new(**model_args)
+    model = NanoGPT::GPT.new(model_config)
+    model.load_state_dict(checkpoint["model"])
+    model.to(device) if device != "cpu"
+    model.eval
+
+    dataset_dir = File.join("data", config[:dataset])
+    tokenizer = NanoGPT::Tokenizer.for_dataset(dataset_dir)
+    puts "number of parameters: #{model.num_params / 1e6}M"
+
+    start_text = config[:start]
+    if start_text.start_with?("FILE:")
+      start_text = File.read(start_text[5..])
+    end
+
+    start_ids = tokenizer.encode(start_text)
+    x = Torch.tensor([start_ids], dtype: :long, device: device)
+
+    puts "Generating #{config[:num_samples]} samples..."
+    puts "=" * 50
+
+    config[:num_samples].times do |k|
+      y = model.generate(
+        x,
+        config[:max_new_tokens],
+        temperature: config[:temperature],
+        top_k: config[:top_k]
+      )
+
+      output = tokenizer.decode(y[0].to_a)
+      puts output
+      puts "-" * 50
+    end
+  end
+
+  def bench
+    bench_config = {
+      batch_size: 12,
+      block_size: 1024,
+      n_layer: 12,
+      n_head: 12,
+      n_embd: 768,
+      dropout: 0.0,
+      bias: false,
+      real_data: true,
+      dataset: "openwebtext",
+      seed: 1337,
+      device: "auto"
+    }
+
+    # Parse args
+    @args.each do |arg|
+      next unless arg.start_with?("--") && arg.include?("=")
+
+      key, val = arg[2..].split("=", 2)
+      key = key.to_sym
+
+      next unless bench_config.key?(key)
+
+      bench_config[key] = case bench_config[key]
+                          when Integer then val.to_i
+                          when Float then val.to_f
+                          when TrueClass, FalseClass then val.downcase == "true"
+                          else val
+                          end
+    end
+
+    puts "=" * 60
+    puts "NanoGPT Benchmark"
+    puts "=" * 60
+    puts ""
+    puts "Configuration:"
+    puts "  batch_size: #{bench_config[:batch_size]}"
+    puts "  block_size: #{bench_config[:block_size]}"
+    puts "  n_layer: #{bench_config[:n_layer]}"
+    puts "  n_head: #{bench_config[:n_head]}"
+    puts "  n_embd: #{bench_config[:n_embd]}"
+    puts "  real_data: #{bench_config[:real_data]}"
+    puts ""
+
+    if bench_config[:device] == "auto"
+      bench_config[:device] = NanoGPT::Device.auto
+    end
+    device = bench_config[:device]
+    puts "Device: #{device}"
+
+    Torch.manual_seed(bench_config[:seed])
+
+    if bench_config[:real_data]
+      data_dir = File.join("data", bench_config[:dataset])
+      train_bin = File.join(data_dir, "train.bin")
+
+      unless File.exist?(train_bin)
+        puts ""
+        puts "Warning: #{train_bin} not found, using random data instead."
+        puts "To use real data, run: bundle exec ruby data/#{bench_config[:dataset]}/prepare.rb"
+        puts ""
+        bench_config[:real_data] = false
+      end
+    end
+
+    if bench_config[:real_data]
+      bytes = File.binread(File.join("data", bench_config[:dataset], "train.bin"))
+      train_data = bytes.unpack("S<*")
+      puts "Loaded #{train_data.size} tokens from #{bench_config[:dataset]}"
+
+      get_batch = lambda do
+        max_start = train_data.size - bench_config[:block_size] - 1
+        indices = Array.new(bench_config[:batch_size]) { rand(0..max_start) }
+        x_arrays = indices.map { |i| train_data[i, bench_config[:block_size]] }
+        y_arrays = indices.map { |i| train_data[i + 1, bench_config[:block_size]] }
+        x = Torch.tensor(x_arrays, dtype: :long)
+        y = Torch.tensor(y_arrays, dtype: :long)
+        x = x.to(device) if device != "cpu"
+        y = y.to(device) if device != "cpu"
+        [x, y]
+      end
+    else
+      vocab_size = 50304
+      puts "Using random data (vocab_size=#{vocab_size})"
+
+      get_batch = lambda do
+        x = Torch.randint(vocab_size, [bench_config[:batch_size], bench_config[:block_size]], dtype: :long)
+        y = Torch.randint(vocab_size, [bench_config[:batch_size], bench_config[:block_size]], dtype: :long)
+        x = x.to(device) if device != "cpu"
+        y = y.to(device) if device != "cpu"
+        [x, y]
+      end
+    end
+
+    puts ""
+    puts "Initializing model..."
+    model_config = NanoGPT::GPTConfig.new(
+      block_size: bench_config[:block_size],
+      vocab_size: 50304,
+      n_layer: bench_config[:n_layer],
+      n_head: bench_config[:n_head],
+      n_embd: bench_config[:n_embd],
+      dropout: bench_config[:dropout],
+      bias: bench_config[:bias]
+    )
+
+    model = NanoGPT::GPT.new(model_config)
+    model.to(device) if device != "cpu"
+
+    optimizer = model.configure_optimizers(
+      weight_decay: 1e-2,
+      learning_rate: 1e-4,
+      betas: [0.9, 0.95],
+      device_type: NanoGPT::Device.type(device)
+    )
+
+    puts ""
+    puts "Starting benchmark..."
+    puts "-" * 60
+
+    [{ name: "burn-in", steps: 10 }, { name: "benchmark", steps: 20 }].each do |phase|
+      puts ""
+      puts "Phase: #{phase[:name]} (#{phase[:steps]} steps)"
+
+      x, y = get_batch.call
+      t0 = Time.now
+
+      phase[:steps].times do |k|
+        _logits, loss = model.forward(x, targets: y)
+        x, y = get_batch.call
+        optimizer.zero_grad
+        loss.backward
+        optimizer.step
+        loss_val = loss.item
+        puts "  #{k}/#{phase[:steps]} loss: #{format('%.4f', loss_val)}"
+      end
+
+      t1 = Time.now
+      dt = t1 - t0
+
+      if phase[:name] == "benchmark"
+        mfu = model.estimate_mfu(bench_config[:batch_size] * phase[:steps], dt)
+        time_per_iter = dt / phase[:steps] * 1000
+
+        puts ""
+        puts "=" * 60
+        puts "Results:"
+        puts "  Time per iteration: #{format('%.2f', time_per_iter)}ms"
+        puts "  MFU: #{format('%.2f', mfu * 100)}%"
+        puts "=" * 60
+      end
+    end
+  end
+
+  def version
+    puts "nanogpt #{NanoGPT::VERSION}"
+  end
+
+  def help
+    puts <<~HELP
+      nanogpt - A Ruby port of Karpathy's nanoGPT
+
+      Usage: nanogpt <command> [options]
+
+      Commands:
+        prepare   Download and prepare a dataset
+        train     Train a GPT model
+        sample    Generate text from a trained model
+        bench     Run performance benchmarks
+        version   Show version
+        help      Show this help message
+
+      Examples:
+        nanogpt prepare shakespeare_char
+        nanogpt train --dataset=shakespeare_char --device=mps
+        nanogpt sample --dataset=shakespeare_char --num_samples=3
+        nanogpt bench --batch_size=8 --block_size=512
+
+      For more information, visit: https://github.com/khasinski/nanogpt-rb
+    HELP
+  end
+end
+
+NanoGPTCLI.new(ARGV).run

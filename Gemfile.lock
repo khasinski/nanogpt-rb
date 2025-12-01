@@ -1,3 +1,11 @@
+PATH
+  remote: .
+  specs:
+    nanogpt (0.1.0)
+      numo-narray (~> 0.9)
+      tiktoken_ruby (~> 0.0)
+      torch-rb (~> 0.14)
+
 GEM
   remote: https://rubygems.org/
   specs:
@@ -26,11 +34,9 @@ PLATFORMS
   arm64-darwin-24
 
 DEPENDENCIES
-  numo-narray (~> 0.9)
+  nanogpt!
   parquet (~> 0.5)
   rspec (~> 3.12)
-  tiktoken_ruby (~> 0.0)
-  torch-rb (~> 0.14)
 
 BUNDLED WITH
    2.7.2

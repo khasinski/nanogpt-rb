@@ -64,7 +64,12 @@ class NanoGPTCLI
       exit 1
     end
 
+    # Set output directory to current working directory
+    output_dir = File.join(Dir.pwd, "data", dataset)
+    ENV["NANOGPT_DATA_DIR"] = output_dir
+
     puts "Preparing dataset: #{dataset}"
+    puts "Output directory: #{output_dir}"
     load prepare_script
   end
 

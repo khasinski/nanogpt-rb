@@ -33,7 +33,10 @@ require "rubygems/package"
 require "zlib"
 
 SCRIPT_DIR = File.dirname(__FILE__)
-RAW_DIR = File.join(SCRIPT_DIR, "raw")
+OUTPUT_DIR = ENV["NANOGPT_DATA_DIR"] || SCRIPT_DIR
+RAW_DIR = File.join(OUTPUT_DIR, "raw")
+
+FileUtils.mkdir_p(OUTPUT_DIR) if ENV["NANOGPT_DATA_DIR"]
 DEFAULT_VAL_RATIO = 0.0005  # ~0.5% for validation
 
 def parse_args
@@ -60,11 +63,17 @@ def parse_args
 end
 
 def find_data_files
-  # Look for various supported formats
+  # Look for various supported formats in both SCRIPT_DIR (gem) and OUTPUT_DIR (local)
   patterns = [
     File.join(RAW_DIR, "**", "*.parquet"),  # Parquet (from Python export)
     File.join(RAW_DIR, "**", "*.tar"),       # Original tar files
     File.join(RAW_DIR, "**", "*.txt"),       # Plain text files
+    File.join(OUTPUT_DIR, "*.parquet"),
+    File.join(OUTPUT_DIR, "*.tar"),
+    File.join(OUTPUT_DIR, "*.txt"),
+    File.join(SCRIPT_DIR, "raw", "**", "*.parquet"),
+    File.join(SCRIPT_DIR, "raw", "**", "*.tar"),
+    File.join(SCRIPT_DIR, "raw", "**", "*.txt"),
     File.join(SCRIPT_DIR, "*.parquet"),
     File.join(SCRIPT_DIR, "*.tar"),
     File.join(SCRIPT_DIR, "*.txt")
@@ -273,8 +282,8 @@ def main
 
   # Write binary files
   puts "Writing binary files..."
-  write_binary(train_tokens, File.join(SCRIPT_DIR, "train.bin"))
-  write_binary(val_tokens, File.join(SCRIPT_DIR, "val.bin"))
+  write_binary(train_tokens, File.join(OUTPUT_DIR, "train.bin"))
+  write_binary(val_tokens, File.join(OUTPUT_DIR, "val.bin"))
 
   puts ""
   puts "Done! OpenWebText dataset prepared."

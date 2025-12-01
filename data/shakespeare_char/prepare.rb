@@ -8,9 +8,13 @@ require "net/http"
 require "openssl"
 require "numo/narray"
 require "json"
+require "fileutils"
 
 DATA_URL = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
 SCRIPT_DIR = File.dirname(__FILE__)
+OUTPUT_DIR = ENV["NANOGPT_DATA_DIR"] || SCRIPT_DIR
+
+FileUtils.mkdir_p(OUTPUT_DIR) if ENV["NANOGPT_DATA_DIR"]
 
 def download_file(url)
   uri = URI(url)
@@ -59,8 +63,8 @@ puts "Val has #{val_ids.length} tokens"
 # Export to binary files (uint16)
 train_arr = Numo::UInt16.cast(train_ids)
 val_arr = Numo::UInt16.cast(val_ids)
-File.binwrite(File.join(SCRIPT_DIR, "train.bin"), train_arr.to_binary)
-File.binwrite(File.join(SCRIPT_DIR, "val.bin"), val_arr.to_binary)
+File.binwrite(File.join(OUTPUT_DIR, "train.bin"), train_arr.to_binary)
+File.binwrite(File.join(OUTPUT_DIR, "val.bin"), val_arr.to_binary)
 
 # Save meta information as JSON
 meta = {
@@ -68,6 +72,6 @@ meta = {
   "itos" => itos.transform_keys(&:to_s),
   "stoi" => stoi
 }
-File.write(File.join(SCRIPT_DIR, "meta.json"), JSON.pretty_generate(meta))
+File.write(File.join(OUTPUT_DIR, "meta.json"), JSON.pretty_generate(meta))
 
 puts "Done! Created train.bin, val.bin, and meta.json"

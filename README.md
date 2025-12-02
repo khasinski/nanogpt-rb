@@ -1,5 +1,7 @@
 # nanoGPT
 
+[![Gem Version](https://badge.fury.io/rb/nanogpt.svg)](https://rubygems.org/gems/nanogpt)
+
 A Ruby port of Karpathy's [nanoGPT](https://github.com/karpathy/nanoGPT). Train GPT-2 style language models from scratch using [torch.rb](https://github.com/ankane/torch.rb).
 
 Built for Ruby developers who want to understand how LLMs work by building one.

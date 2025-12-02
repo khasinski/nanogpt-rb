@@ -13,7 +13,7 @@ gem install nanogpt
 nanogpt prepare shakespeare_char
 
 # Train (use MPS on Apple Silicon for 17x speedup)
-nanogpt train --dataset=shakespeare_char --device=mps
+nanogpt train --dataset=shakespeare_char --device=mps --max-iters=2000
 
 # Generate text
 nanogpt sample --dataset=shakespeare_char
@@ -30,7 +30,7 @@ bundle install
 bundle exec ruby data/shakespeare_char/prepare.rb
 
 # Train
-bundle exec exe/nanogpt train --dataset=shakespeare_char --device=mps
+bundle exec exe/nanogpt train --dataset=shakespeare_char --device=mps --max-iters=2000
 
 # Sample
 bundle exec exe/nanogpt sample --dataset=shakespeare_char
